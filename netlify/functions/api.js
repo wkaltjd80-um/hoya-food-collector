@@ -52,6 +52,19 @@ function cleanTitle(raw) {
     .trim();
 }
 
+const DEFAULT_FOOD_PHOTOS = {
+  '한식': 'https://images.unsplash.com/photo-1590301157890-4810ed352733?auto=format&fit=crop&w=800&q=80',
+  '고기': 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80',
+  '국밥': 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=800&q=80',
+  '일식': 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?auto=format&fit=crop&w=800&q=80',
+  '이탈리안': 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?auto=format&fit=crop&w=800&q=80',
+  '중식': 'https://images.unsplash.com/photo-1525755662778-989d0524087e?auto=format&fit=crop&w=800&q=80',
+  '해산물': 'https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?auto=format&fit=crop&w=800&q=80',
+  '카페': 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=800&q=80',
+  '프랑스식': 'https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?auto=format&fit=crop&w=800&q=80',
+  '기타': 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80'
+};
+
 // Safely extract URL, Title hint, and Address hint from mobile shares (Naver Map, Kakao Map, etc.)
 function extractUrlAndHints(rawInput) {
   if (!rawInput) return { url: '', hintTitle: '', hintAddress: '' };
@@ -437,6 +450,8 @@ async function extractMetadata(html, targetUrl, hints = {}) {
     const userMatch = targetUrl.match(/instagram\.com\/([a-zA-Z0-9._]+)/i);
     result.siteName = 'Instagram';
     result.category = '기타';
+    result.image = DEFAULT_FOOD_PHOTOS['기타'];
+    result.extraImages = Object.values(DEFAULT_FOOD_PHOTOS);
     if (postMatch) {
       result.title = hints.hintTitle || `인스타그램 맛집 게시물 (${postMatch[1]})`;
       result.description = `인스타그램 릴스/피드 링크 (${targetUrl})`;
@@ -444,7 +459,6 @@ async function extractMetadata(html, targetUrl, hints = {}) {
       result.title = hints.hintTitle || `@${userMatch[1]} (인스타그램)`;
       result.description = `인스타그램 @${userMatch[1]} 프로필 / 추천 맛집`;
     }
-    // For Instagram, do not wait for heavy/blocked HTML fetch
     return result;
   }
 
@@ -502,6 +516,17 @@ async function extractMetadata(html, targetUrl, hints = {}) {
   }
 
   if (!result.title) result.title = hints.hintTitle || targetUrl;
+
+  // Ensure an appetizing photo is always available even if scraping blocked images
+  if (!result.image) {
+    result.image = DEFAULT_FOOD_PHOTOS[result.category] || DEFAULT_FOOD_PHOTOS['한식'];
+  }
+  if (!result.extraImages || result.extraImages.length === 0) {
+    result.extraImages = [result.image, ...Object.values(DEFAULT_FOOD_PHOTOS).filter(u => u !== result.image)];
+  } else if (!result.extraImages.includes(result.image)) {
+    result.extraImages.unshift(result.image);
+  }
+
   return result;
 }
 
@@ -632,12 +657,13 @@ exports.handler = async function (event) {
       } catch (extractErr) {
         console.error('Extract error fallback:', extractErr);
         // Fallback gracefully rather than crashing with 500
+        const fallbackImg = DEFAULT_FOOD_PHOTOS['한식'];
         return sendResponse(200, {
           url: cleanUrl || rawInput,
           title: effectiveHints.hintTitle || cleanUrl || rawInput,
           description: '',
-          image: '',
-          extraImages: [],
+          image: fallbackImg,
+          extraImages: Object.values(DEFAULT_FOOD_PHOTOS),
           favicon: '',
           siteName: '웹페이지',
           location: effectiveHints.hintAddress || '',
@@ -683,9 +709,77 @@ exports.handler = async function (event) {
       });
     }
 
+    // 2-1. API: Upload phone photo directly to Notion files storage
+    if (pathname === '/upload-image' && method === 'POST') {
+      const { imageBase64, filename, mimeType } = body;
+      const effectiveKey = body.notionApiKey || apiKey;
+
+      if (!imageBase64) return sendResponse(400, { error: '업로드할 이미지 데이터가 없습니다.' });
+      if (!effectiveKey) return sendResponse(400, { error: 'Notion API 키가 설정되지 않았습니다. 상단 [설정]을 확인하세요.' });
+
+      try {
+        const cleanBase64 = String(imageBase64).replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+        const buffer = Buffer.from(cleanBase64, 'base64');
+        const safeFilename = (filename || 'phone_food.jpg').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const safeMime = mimeType || 'image/jpeg';
+
+        // 1. Create file upload session in Notion
+        const initRes = await fetch('https://api.notion.com/v1/file_uploads', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${effectiveKey}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            filename: safeFilename,
+            content_type: safeMime
+          })
+        });
+
+        const uploadInfo = await initRes.json();
+        if (!initRes.ok) {
+          return sendResponse(initRes.status, {
+            error: uploadInfo.message || '노션 파일 업로드 세션 생성 실패',
+            details: uploadInfo
+          });
+        }
+
+        // 2. Upload binary buffer to Notion's upload_url
+        const fd = new FormData();
+        fd.append('file', new Blob([buffer], { type: safeMime }), safeFilename);
+
+        const sendRes = await fetch(uploadInfo.upload_url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${effectiveKey}`,
+            'Notion-Version': '2022-06-28'
+          },
+          body: fd
+        });
+
+        const sendInfo = await sendRes.json();
+        if (!sendRes.ok) {
+          return sendResponse(sendRes.status, {
+            error: sendInfo.message || '노션 파일 바이너리 전송 실패',
+            details: sendInfo
+          });
+        }
+
+        return sendResponse(200, {
+          success: true,
+          fileUploadId: uploadInfo.id,
+          filename: safeFilename
+        });
+      } catch (uploadErr) {
+        console.error('Image upload error:', uploadErr);
+        return sendResponse(500, { error: '스마트폰 사진 업로드 처리 실패: ' + (uploadErr.message || '오류') });
+      }
+    }
+
     // 3. API: Save to Notion
     if ((pathname === '/save-to-notion' || pathname === '/notion/save') && method === 'POST') {
-      const { url, title, description, category, tags, memo, image, location, siteName } = body;
+      const { url, title, description, category, tags, memo, image, location, siteName, fileUploadId } = body;
       const effectiveKey = body.notionApiKey || apiKey;
       const effectiveTarget = formatNotionId(body.notionTargetId || targetId);
 
@@ -699,6 +793,15 @@ exports.handler = async function (event) {
 
       const pageTitle = (title || url).trim();
       const children = [];
+
+      // If user uploaded a photo from their phone, include it as an image block at the very top!
+      if (fileUploadId) {
+        children.push({
+          object: 'block',
+          type: 'image',
+          image: { type: 'file_upload', file_upload: { id: fileUploadId } }
+        });
+      }
 
       if (url) children.push({ object: 'block', type: 'bookmark', bookmark: { url } });
       if (memo) {
@@ -783,7 +886,10 @@ exports.handler = async function (event) {
         };
       }
 
-      if (image && image.startsWith('http')) {
+      // Attach representative cover photo
+      if (fileUploadId) {
+        payload.cover = { type: 'file_upload', file_upload: { id: fileUploadId } };
+      } else if (image && image.startsWith('http')) {
         payload.cover = { type: 'external', external: { url: image } };
       }
 

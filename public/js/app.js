@@ -61,6 +61,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const manualPhotoUrlInput = document.getElementById('manualPhotoUrlInput');
   const applyManualPhotoBtn = document.getElementById('applyManualPhotoBtn');
   const changePhotoBtn = document.getElementById('changePhotoBtn');
+  const triggerPhonePhotoBtn = document.getElementById('triggerPhonePhotoBtn');
+  const phonePhotoFileInput = document.getElementById('phonePhotoFileInput');
+  const phonePhotoUploadStatus = document.getElementById('phonePhotoUploadStatus');
+  const phoneUploadStatusText = document.getElementById('phoneUploadStatusText');
+  const candidateCountBadge = document.getElementById('candidateCountBadge');
+  const presetPhotosGrid = document.getElementById('presetPhotosGrid');
+  const presetFilterTabs = document.getElementById('presetFilterTabs');
 
   const toastContainer = document.getElementById('toastContainer');
 
@@ -71,6 +78,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentExtraImages = [];
   let currentFaviconData = '';
   let currentSiteNameData = '';
+  let currentFileUploadId = null;
+  let currentActivePresetCategory = 'all';
 
   // LocalStorage Helpers for Netlify Serverless & Offline Persistence
   function getStoredApiKey() {
@@ -393,112 +402,33 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ----------------------------------------------------
-  // Photo Selection Modal Handling (Zero prompt, 100% modal UI)
+  // Food Category & Tags Auto Suggestion
   // ----------------------------------------------------
-  function openPhotoModal() {
-    if (!photoModal) return;
-
-    // Render candidate photos from this restaurant / link
-    if (currentExtraImages && currentExtraImages.length > 0) {
-      candidatePhotosGrid.innerHTML = currentExtraImages.map((imgUrl, idx) => {
-        const isSelected = imgUrl === currentImageData;
-        return `
-          <div class="candidate-photo-item ${isSelected ? 'selected' : ''}" data-url="${escapeHtml(imgUrl)}" title="클릭하여 이 사진으로 선택">
-            <img src="${escapeHtml(imgUrl)}" alt="식당 사진 ${idx + 1}" onerror="this.parentElement.remove()">
-          </div>
-        `;
-      }).join('');
-
-      candidatePhotosGrid.querySelectorAll('.candidate-photo-item').forEach(item => {
-        item.addEventListener('click', () => {
-          const selectedUrl = item.dataset.url;
-          applySelectedPhoto(selectedUrl);
-        });
-      });
-    } else {
-      candidatePhotosGrid.innerHTML = `
-        <div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: var(--text-dim); font-size: 13px;">
-          <i class="fa-regular fa-image" style="font-size: 24px; margin-bottom: 6px; display: block;"></i>
-          추출된 추가 사진이 없습니다. 아래 입력창에 원하는 이미지 주소를 붙여넣어 주세요.
-        </div>
-      `;
-    }
-
-    if (manualPhotoUrlInput) {
-      manualPhotoUrlInput.value = currentImageData || '';
-    }
-
-    photoModal.classList.add('open');
-  }
-
-  function closePhotoModal() {
-    if (photoModal) photoModal.classList.remove('open');
-  }
-
-  function applySelectedPhoto(url) {
-    if (!url) return;
-    currentImageData = url;
-    previewImage.src = url;
-    previewImage.classList.add('has-image');
-    noImagePlaceholder.style.display = 'none';
-    closePhotoModal();
-    showToast('대표 사진이 성공적으로 변경되었습니다! 📸', 'success');
-  }
-
-  if (changePhotoBtn) {
-    changePhotoBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      openPhotoModal();
-    });
-  }
-
-  if (closePhotoModalBtn) closePhotoModalBtn.addEventListener('click', closePhotoModal);
-  if (cancelPhotoModalBtn) cancelPhotoModalBtn.addEventListener('click', closePhotoModal);
-  if (photoModal) {
-    photoModal.addEventListener('click', (e) => {
-      if (e.target === photoModal) closePhotoModal();
-    });
-  }
-
-  if (applyManualPhotoBtn && manualPhotoUrlInput) {
-    applyManualPhotoBtn.addEventListener('click', () => {
-      const typedUrl = manualPhotoUrlInput.value.trim();
-      if (!typedUrl) {
-        showToast('이미지 주소(URL)를 입력해주세요.', 'error');
-        manualPhotoUrlInput.focus();
-        return;
-      }
-      applySelectedPhoto(typedUrl);
-    });
-
-    manualPhotoUrlInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        applyManualPhotoBtn.click();
-      }
-    });
-  }
-
   function autoSuggestCategoryAndTags(url, title, desc) {
     const combined = `${url} ${title} ${desc}`.toLowerCase();
 
-    let targetCat = '업무';
-    if (/github|stackoverflow|developer|api|code|npm|python|react|javascript|vue/i.test(combined)) {
-      targetCat = '개발/도구';
-      addTagIfMissing('개발');
-      addTagIfMissing('코드');
-    } else if (/news|naver\.com|daum\.net|chosun|ytn|bbc|cnn|기사|뉴스|속보/i.test(combined)) {
-      targetCat = '기사/뉴스';
-      addTagIfMissing('뉴스');
-    } else if (/youtube\.com|youtu\.be|video|watch|동영상/i.test(combined)) {
-      targetCat = '자료/레퍼런스';
-      addTagIfMissing('영상');
-    } else if (/coupang|smartstore|amazon|11st|gmarket|쇼핑|구매|상품|가격/i.test(combined)) {
-      targetCat = '쇼핑/위시';
-      addTagIfMissing('위시리스트');
-    } else if (/idea|startup|창업|비즈니스|기획|마케팅/i.test(combined)) {
-      targetCat = '아이디어';
-      addTagIfMissing('인사이트');
+    let targetCat = '한식';
+    if (/스시|초밥|라멘|이자카야|돈카츠|우동|사케|일식/i.test(combined)) {
+      targetCat = '일식';
+      addTagIfMissing('일식맛집');
+    } else if (/짜장|짬뽕|탕수육|중화|중식|딤섬|마라탕|양꼬치/i.test(combined)) {
+      targetCat = '중식';
+      addTagIfMissing('중식맛집');
+    } else if (/파스타|피자|스테이크|리조또|와인|이탈리안|양식/i.test(combined)) {
+      targetCat = '이탈리안';
+      addTagIfMissing('양식맛집');
+    } else if (/카페|커피|베이커리|디저트|케이크|크루아상|에스프레소|브런치/i.test(combined)) {
+      targetCat = '카페';
+      addTagIfMissing('카페투어');
+    } else if (/해물|조개|생선|대게|킹크랩|회|해산물|바다/i.test(combined)) {
+      targetCat = '해산물';
+      addTagIfMissing('해산물');
+    } else if (/프랑스|비스트로|바게트|에스카르고/i.test(combined)) {
+      targetCat = '프랑스식';
+      addTagIfMissing('프렌치');
+    } else if (/삼겹살|갈비|돼지|소고기|국밥|찌개|백반|한식/i.test(combined)) {
+      targetCat = '한식';
+      addTagIfMissing('한식맛집');
     }
 
     // Set Category Pill Active
@@ -677,6 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
       tags: currentTags,
       memo: inputMemo.value.trim(),
       image: currentImageData,
+      fileUploadId: currentFileUploadId,
       siteName: currentSiteNameData || previewSiteName.textContent,
       notionApiKey: key,
       notionTargetId: target
@@ -756,6 +687,8 @@ document.addEventListener('DOMContentLoaded', () => {
     previewImage.classList.remove('has-image');
     noImagePlaceholder.style.display = 'flex';
     currentImageData = '';
+    currentFileUploadId = null;
+    currentExtraImages = [];
     currentFaviconData = '';
     currentTags = ['추천'];
     renderTags();
@@ -1055,10 +988,143 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ----------------------------------------------------
+  // 7-2. Photo Selection / Change Modal Handling
+  // ----------------------------------------------------
+  const PRESET_FOOD_COLLECTION = [
+    // 한식
+    { name: '🍚 한식 정식 / 찌개', category: '한식', url: 'https://images.unsplash.com/photo-1590301157890-4810ed352733?auto=format&fit=crop&w=800&q=80' },
+    { name: '🥩 삼겹살 / 숯불구이', category: '고기/국밥', url: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80' },
+    { name: '🍲 돼지국밥 / 탕', category: '고기/국밥', url: 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=800&q=80' },
+    { name: '🍗 바삭한 치킨 / 통닭', category: '한식', url: 'https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?auto=format&fit=crop&w=800&q=80' },
+    // 일식
+    { name: '🍣 모둠 초밥 / 스시', category: '일식', url: 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?auto=format&fit=crop&w=800&q=80' },
+    { name: '🍜 일본식 라멘', category: '일식', url: 'https://images.unsplash.com/photo-1557872943-16a5ac26437e?auto=format&fit=crop&w=800&q=80' },
+    // 중식
+    { name: '🥟 딤섬 / 군만두', category: '중식', url: 'https://images.unsplash.com/photo-1525755662778-989d0524087e?auto=format&fit=crop&w=800&q=80' },
+    { name: '🥢 중화 요리 / 볶음', category: '중식', url: 'https://images.unsplash.com/photo-1563245372-f21724e3856d?auto=format&fit=crop&w=800&q=80' },
+    // 양식
+    { name: '🍝 토마토 파스타', category: '양식', url: 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?auto=format&fit=crop&w=800&q=80' },
+    { name: '🍕 화덕 피자', category: '양식', url: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=800&q=80' },
+    { name: '🥪 브런치 & 버거', category: '양식', url: 'https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=800&q=80' },
+    // 카페 & 디저트
+    { name: '☕️ 아메리카노 & 라떼', category: '카페', url: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=800&q=80' },
+    { name: '🍰 베이커리 & 케이크', category: '카페', url: 'https://images.unsplash.com/photo-1587314168485-3236d6710814?auto=format&fit=crop&w=800&q=80' },
+    // 해산물
+    { name: '🦐 신선한 해산물 요리', category: '한식', url: 'https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?auto=format&fit=crop&w=800&q=80' }
+  ];
+
+  // Helper to compress image file using HTML5 Canvas
+  function compressImageFile(file, maxDimension = 1600, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          resolve(dataUrl);
+        };
+        img.onerror = () => reject(new Error('이미지를 읽을 수 없습니다.'));
+        img.src = e.target.result;
+      };
+      reader.onerror = () => reject(new Error('파일 읽기 오류'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Handle Smartphone Photo Upload
+  if (triggerPhonePhotoBtn && phonePhotoFileInput) {
+    triggerPhonePhotoBtn.addEventListener('click', () => {
+      phonePhotoFileInput.click();
+    });
+
+    phonePhotoFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (!file.type.startsWith('image/')) {
+        showToast('이미지 파일(JPG, PNG 등)만 선택하실 수 있습니다.', 'error');
+        return;
+      }
+
+      if (phonePhotoUploadStatus) {
+        phonePhotoUploadStatus.style.display = 'flex';
+        if (phoneUploadStatusText) {
+          phoneUploadStatusText.textContent = '스마트폰 사진을 최적화하여 노션에 안전하게 전송 중입니다...';
+        }
+      }
+
+      try {
+        // Compress client-side
+        const compressedBase64 = await compressImageFile(file, 1600, 0.85);
+
+        // Upload to Notion storage via backend
+        const key = getStoredApiKey();
+        const res = await fetch('/api/upload-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: compressedBase64,
+            filename: file.name || 'phone_food.jpg',
+            mimeType: 'image/jpeg',
+            notionApiKey: key
+          })
+        });
+
+        const uploadData = await res.json();
+        if (!res.ok || !uploadData.fileUploadId) {
+          throw new Error(uploadData.error || '노션 파일 업로드에 실패했습니다.');
+        }
+
+        currentFileUploadId = uploadData.fileUploadId;
+        currentImageData = compressedBase64;
+
+        // Add to candidates so it's visible in candidate gallery
+        if (!currentExtraImages.includes(compressedBase64)) {
+          currentExtraImages.unshift(compressedBase64);
+        }
+
+        selectPhoto(compressedBase64, true, uploadData.fileUploadId);
+        renderCandidatePhotos();
+        renderPresetFoodPhotos(currentActivePresetCategory);
+
+        showToast('스마트폰 사진이 대표 사진으로 등록되었습니다! 📸', 'success');
+        setTimeout(() => {
+          closePhotoModal();
+        }, 300);
+
+      } catch (err) {
+        console.error('Phone upload failed:', err);
+        showToast('스마트폰 사진 업로드 실패: ' + (err.message || '다시 시도해 주세요.'), 'error');
+      } finally {
+        if (phonePhotoUploadStatus) phonePhotoUploadStatus.style.display = 'none';
+        phonePhotoFileInput.value = '';
+      }
+    });
+  }
+
   function openPhotoModal() {
     renderCandidatePhotos();
+    renderPresetFoodPhotos(currentActivePresetCategory);
+
     if (manualPhotoUrlInput) {
-      manualPhotoUrlInput.value = currentImageData || '';
+      manualPhotoUrlInput.value = (currentImageData && currentImageData.startsWith('http')) ? currentImageData : '';
     }
     if (photoModal) {
       photoModal.classList.add('open');
@@ -1085,12 +1151,16 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    if (candidateCountBadge) {
+      candidateCountBadge.textContent = `${candidates.length}장`;
+    }
+
     if (candidates.length === 0) {
       candidatePhotosGrid.innerHTML = `
         <div class="candidate-empty-msg" style="grid-column: 1 / -1; text-align: center; padding: 20px; color: var(--text-dim); font-size: 13px;">
           <i class="fa-regular fa-image" style="font-size: 24px; margin-bottom: 8px; display: block; opacity: 0.6;"></i>
           추출된 후보 사진이 없습니다.<br>
-          아래 입력창에 원하시는 사진의 이미지 주소(URL)를 직접 붙여넣어 주세요!
+          위의 <strong>[📱 내 스마트폰 사진 선택]</strong> 또는 아래 <strong>[추천 음식 사진]</strong>을 터치해 주세요!
         </div>
       `;
       return;
@@ -1112,16 +1182,73 @@ document.addEventListener('DOMContentLoaded', () => {
       item.appendChild(img);
 
       item.addEventListener('click', () => {
-        selectPhoto(imgUrl);
+        const isUserUpload = imgUrl.startsWith('data:');
+        selectPhoto(imgUrl, isUserUpload, isUserUpload ? currentFileUploadId : null);
+        renderCandidatePhotos();
+        renderPresetFoodPhotos(currentActivePresetCategory);
       });
 
       candidatePhotosGrid.appendChild(item);
     });
   }
 
-  function selectPhoto(imgUrl) {
+  function renderPresetFoodPhotos(categoryFilter = 'all') {
+    if (!presetPhotosGrid) return;
+    presetPhotosGrid.innerHTML = '';
+
+    const filtered = categoryFilter === 'all'
+      ? PRESET_FOOD_COLLECTION
+      : PRESET_FOOD_COLLECTION.filter(p => p.category === categoryFilter);
+
+    filtered.forEach(preset => {
+      const item = document.createElement('div');
+      item.className = 'preset-photo-item' + (preset.url === currentImageData ? ' selected' : '');
+      item.title = `${preset.name} (클릭하여 대표 사진으로 선택)`;
+
+      const img = document.createElement('img');
+      img.src = preset.url;
+      img.alt = preset.name;
+      img.loading = 'lazy';
+
+      const nameBadge = document.createElement('div');
+      nameBadge.className = 'preset-name-badge';
+      nameBadge.textContent = preset.name;
+
+      item.appendChild(img);
+      item.appendChild(nameBadge);
+
+      item.addEventListener('click', () => {
+        selectPhoto(preset.url, false, null);
+        renderCandidatePhotos();
+        renderPresetFoodPhotos(currentActivePresetCategory);
+        showToast(`${preset.name} 사진이 선택되었습니다! 🍽️`, 'success');
+      });
+
+      presetPhotosGrid.appendChild(item);
+    });
+  }
+
+  // Handle Preset Category Tabs
+  if (presetFilterTabs) {
+    presetFilterTabs.addEventListener('click', (e) => {
+      const tab = e.target.closest('.preset-tab');
+      if (!tab) return;
+      presetFilterTabs.querySelectorAll('.preset-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentActivePresetCategory = tab.dataset.preset || 'all';
+      renderPresetFoodPhotos(currentActivePresetCategory);
+    });
+  }
+
+  function selectPhoto(imgUrl, isPhoneUpload = false, fileUploadId = null) {
     if (!imgUrl) return;
     currentImageData = imgUrl;
+
+    if (isPhoneUpload && fileUploadId) {
+      currentFileUploadId = fileUploadId;
+    } else if (!isPhoneUpload) {
+      currentFileUploadId = null;
+    }
 
     if (previewImage) {
       previewImage.src = imgUrl;
@@ -1132,10 +1259,14 @@ document.addEventListener('DOMContentLoaded', () => {
       noImagePlaceholder.style.display = 'none';
     }
 
-    if (photoModal) {
+    if (photoModal && !isPhoneUpload) {
       photoModal.classList.remove('open');
     }
-    showToast('대표 사진이 성공적으로 변경되었습니다!', 'success');
+    showToast('대표 사진이 성공적으로 변경되었습니다! 📸', 'success');
+  }
+
+  function closePhotoModal() {
+    if (photoModal) photoModal.classList.remove('open');
   }
 
   if (applyManualPhotoBtn && manualPhotoUrlInput) {
@@ -1165,31 +1296,24 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Add to extra images if not already there
     if (!currentExtraImages.includes(url)) {
       currentExtraImages.unshift(url);
     }
 
-    selectPhoto(url);
+    selectPhoto(url, false, null);
   }
 
   if (closePhotoModalBtn) {
-    closePhotoModalBtn.addEventListener('click', () => {
-      if (photoModal) photoModal.classList.remove('open');
-    });
+    closePhotoModalBtn.addEventListener('click', closePhotoModal);
   }
 
   if (cancelPhotoModalBtn) {
-    cancelPhotoModalBtn.addEventListener('click', () => {
-      if (photoModal) photoModal.classList.remove('open');
-    });
+    cancelPhotoModalBtn.addEventListener('click', closePhotoModal);
   }
 
   if (photoModal) {
     photoModal.addEventListener('click', (e) => {
-      if (e.target === photoModal) {
-        photoModal.classList.remove('open');
-      }
+      if (e.target === photoModal) closePhotoModal();
     });
   }
 

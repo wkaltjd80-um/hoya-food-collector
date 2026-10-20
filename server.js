@@ -99,6 +99,19 @@ function cleanTitle(raw) {
     .trim();
 }
 
+const DEFAULT_FOOD_PHOTOS = {
+  '한식': 'https://images.unsplash.com/photo-1590301157890-4810ed352733?auto=format&fit=crop&w=800&q=80',
+  '고기': 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80',
+  '국밥': 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=800&q=80',
+  '일식': 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?auto=format&fit=crop&w=800&q=80',
+  '이탈리안': 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?auto=format&fit=crop&w=800&q=80',
+  '중식': 'https://images.unsplash.com/photo-1525755662778-989d0524087e?auto=format&fit=crop&w=800&q=80',
+  '해산물': 'https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?auto=format&fit=crop&w=800&q=80',
+  '카페': 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=800&q=80',
+  '프랑스식': 'https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?auto=format&fit=crop&w=800&q=80',
+  '기타': 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80'
+};
+
 function extractUrlAndHints(rawInput) {
   if (!rawInput) return { url: '', hintTitle: '', hintAddress: '' };
   
@@ -763,9 +776,77 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // 2-1. API: Upload phone photo directly to Notion files storage
+    if (pathname === '/api/upload-image' && method === 'POST') {
+      const body = await parseJsonBody();
+      const { imageBase64, filename, mimeType } = body;
+      const config = getConfig();
+      const apiKey = body.notionApiKey || config.notionApiKey;
+
+      if (!imageBase64) return sendJson(400, { error: '업로드할 이미지 데이터가 없습니다.' });
+      if (!apiKey) return sendJson(400, { error: 'Notion API 키가 설정되지 않았습니다. 상단 [설정]을 확인하세요.' });
+
+      try {
+        const cleanBase64 = String(imageBase64).replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+        const buffer = Buffer.from(cleanBase64, 'base64');
+        const safeFilename = (filename || 'phone_food.jpg').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const safeMime = mimeType || 'image/jpeg';
+
+        const initRes = await fetch('https://api.notion.com/v1/file_uploads', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            filename: safeFilename,
+            content_type: safeMime
+          })
+        });
+
+        const uploadInfo = await initRes.json();
+        if (!initRes.ok) {
+          return sendJson(initRes.status, {
+            error: uploadInfo.message || '노션 파일 업로드 세션 생성 실패',
+            details: uploadInfo
+          });
+        }
+
+        const fd = new FormData();
+        fd.append('file', new Blob([buffer], { type: safeMime }), safeFilename);
+
+        const sendRes = await fetch(uploadInfo.upload_url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Notion-Version': '2022-06-28'
+          },
+          body: fd
+        });
+
+        const sendInfo = await sendRes.json();
+        if (!sendRes.ok) {
+          return sendJson(sendRes.status, {
+            error: sendInfo.message || '노션 파일 바이너리 전송 실패',
+            details: sendInfo
+          });
+        }
+
+        return sendJson(200, {
+          success: true,
+          fileUploadId: uploadInfo.id,
+          filename: safeFilename
+        });
+      } catch (uploadErr) {
+        console.error('Image upload error:', uploadErr);
+        return sendJson(500, { error: '스마트폰 사진 업로드 처리 실패: ' + (uploadErr.message || '오류') });
+      }
+    }
+
     // 3. API: Save to Notion
     if (pathname === '/api/save-to-notion' && method === 'POST') {
-      const { url, title, description, category, tags, memo, image, siteName, location } = await parseJsonBody();
+      const { url, title, description, category, tags, memo, image, siteName, location, fileUploadId } = await parseJsonBody();
       const config = getConfig();
 
       if (!config.notionApiKey) {
@@ -801,6 +882,15 @@ const server = http.createServer(async (req, res) => {
 
       // Build children content blocks
       const children = [];
+
+      // If user uploaded a photo from their phone, include it as an image block at the very top!
+      if (fileUploadId) {
+        children.push({
+          object: 'block',
+          type: 'image',
+          image: { type: 'file_upload', file_upload: { id: fileUploadId } }
+        });
+      }
 
       // 1) Web Bookmark block
       if (url) {
@@ -922,7 +1012,9 @@ const server = http.createServer(async (req, res) => {
           icon: { type: 'emoji', emoji: '🍽️' }
         };
 
-        if (image && image.startsWith('http')) {
+        if (fileUploadId) {
+          payload.cover = { type: 'file_upload', file_upload: { id: fileUploadId } };
+        } else if (image && image.startsWith('http')) {
           payload.cover = { type: 'external', external: { url: image } };
         }
 

@@ -386,7 +386,7 @@
 
   <!-- Photo Selection / Change Modal -->
   <div id="photoModal" class="modal-backdrop">
-    <div class="modal-window">
+    <div class="modal-window modal-photo-picker">
       <div class="modal-header">
         <div class="modal-title-wrap">
           <i class="fa-solid fa-camera modal-icon"></i>
@@ -396,16 +396,62 @@
       </div>
 
       <div class="modal-body">
-        <!-- 1. Extracted Candidate Photos Gallery -->
+        <!-- 1. Smartphone Photo Upload Area (Top & Prominent) -->
+        <div class="photo-section upload-phone-section">
+          <button type="button" id="triggerPhonePhotoBtn" class="btn-phone-photo-upload">
+            <div class="upload-btn-icon">
+              <i class="fa-solid fa-cloud-arrow-up"></i>
+            </div>
+            <div class="upload-btn-info">
+              <span class="upload-btn-title">📱 내 스마트폰 사진(앨범 / 카메라)에서 선택</span>
+              <span class="upload-btn-sub">스마트폰 속 음식 사진이나 직접 찍은 사진을 대표 사진으로 등록</span>
+            </div>
+            <i class="fa-solid fa-chevron-right upload-btn-arrow"></i>
+          </button>
+          <input type="file" id="phonePhotoFileInput" accept="image/*" style="display: none;">
+          
+          <div id="phonePhotoUploadStatus" class="phone-upload-status" style="display: none;">
+            <i class="fa-solid fa-circle-notch fa-spin"></i>
+            <span id="phoneUploadStatusText">스마트폰 사진을 최적화하여 노션에 안전하게 전송 중입니다...</span>
+          </div>
+        </div>
+
+        <!-- 2. Extracted Candidate Photos Gallery -->
         <div class="photo-section" id="candidatePhotosSection">
-          <label class="field-label"><i class="fa-solid fa-images"></i> 이 식당의 사진 목록 (클릭하여 선택)</label>
+          <div class="section-label-row">
+            <label class="field-label"><i class="fa-solid fa-images"></i> 이 식당 링크에서 발견된 사진 (터치하여 체크)</label>
+            <span id="candidateCountBadge" class="photo-count-pill">0장</span>
+          </div>
           <div id="candidatePhotosGrid" class="candidate-photos-grid">
             <!-- Candidate thumbnails will be rendered here -->
           </div>
         </div>
 
-        <!-- 2. Manual URL Input -->
-        <div class="photo-section" style="margin-top: 20px;">
+        <!-- 3. Curated Preset Food Gallery -->
+        <div class="photo-section" id="presetPhotosSection" style="margin-top: 18px;">
+          <div class="section-label-row">
+            <label class="field-label"><i class="fa-solid fa-utensils"></i> 추천 대표 음식 사진 갤러리 (터치하여 바로 선택)</label>
+            <span class="photo-hint-pill">고화질 맛집 사진</span>
+          </div>
+          
+          <!-- Category Filter Tabs for Presets -->
+          <div class="preset-filter-tabs" id="presetFilterTabs">
+            <button type="button" class="preset-tab active" data-preset="all">전체</button>
+            <button type="button" class="preset-tab" data-preset="한식">🍚 한식</button>
+            <button type="button" class="preset-tab" data-preset="고기/국밥">🥩 고기/국밥</button>
+            <button type="button" class="preset-tab" data-preset="일식">🍣 일식</button>
+            <button type="button" class="preset-tab" data-preset="중식">🥟 중식</button>
+            <button type="button" class="preset-tab" data-preset="양식">🍝 양식</button>
+            <button type="button" class="preset-tab" data-preset="카페">☕️ 카페</button>
+          </div>
+
+          <div id="presetPhotosGrid" class="preset-photos-grid">
+            <!-- Preset items rendered via JS -->
+          </div>
+        </div>
+
+        <!-- 4. Manual URL Input -->
+        <div class="photo-section" style="margin-top: 18px;">
           <label class="field-label" for="manualPhotoUrlInput"><i class="fa-solid fa-link"></i> 이미지 주소(URL) 직접 입력</label>
           <div class="input-with-btn">
             <input type="url" id="manualPhotoUrlInput" class="form-input" placeholder="https://... 이미지 링크 붙여넣기">
