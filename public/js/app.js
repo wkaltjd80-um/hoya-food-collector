@@ -164,44 +164,112 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ----------------------------------------------------
-  // 3. URL Extraction Logic
+  // 3. URL Extraction Logic & Mobile Smart Helper
   // ----------------------------------------------------
+  function extractUrlAndHints(rawInput) {
+    if (!rawInput) return { url: '', hintTitle: '', hintAddress: '' };
+    
+    const text = String(rawInput).trim();
+    const urlRegex = /(https?:\/\/[^\s"'<>()]+)/i;
+    const match = text.match(urlRegex);
+    
+    let url = '';
+    let hintTitle = '';
+    let hintAddress = '';
+    
+    if (match) {
+      url = match[1].replace(/[.,!?;:]+$/, '');
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.includes(url) && !l.startsWith('http'));
+      for (let line of lines) {
+        line = line.replace(/^\[(네이버\s*지도|카카오맵|네이버\s*플레이스|네이버\s*블로그)\]\s*/i, '').trim();
+        if (!line) continue;
+        if (/(동|읍|면|리|구|로|길|시|도)\s+\d+/.test(line) || /^[가-힣]+(?:시|군|구)/.test(line)) {
+          if (!hintAddress) hintAddress = line;
+        } else if (!hintTitle && line.length < 50) {
+          hintTitle = line;
+        }
+      }
+    } else {
+      const domainMatch = text.match(/((?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:\/[^\s"'<>()]*)?)/i);
+      if (domainMatch) {
+        url = 'https://' + domainMatch[1].replace(/[.,!?;:]+$/, '');
+      } else {
+        url = text;
+        if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+      }
+    }
+    
+    return { url, hintTitle, hintAddress };
+  }
+
   pasteBtn.addEventListener('click', async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text && /^https?:\/\//i.test(text.trim())) {
-        urlInput.value = text.trim();
-        showToast('클립보드 링크가 입력되었습니다.', 'info');
-        fetchMetadata(text.trim());
-      } else if (text) {
+      if (!text || !text.trim()) {
+        showToast('클립보드가 비어 있습니다.', 'info');
+        return;
+      }
+      const { url, hintTitle, hintAddress } = extractUrlAndHints(text);
+      if (url) {
+        urlInput.value = url;
+        if (hintTitle && inputTitle && !inputTitle.value) inputTitle.value = hintTitle;
+        if (hintAddress && inputLocation && !inputLocation.value) inputLocation.value = hintAddress;
+        showToast('공유 링크가 자동으로 정리되어 입력되었습니다! ✨', 'info');
+        fetchMetadata(url, { hintTitle, hintAddress });
+      } else {
         urlInput.value = text.trim();
         showToast('텍스트가 입력되었습니다.', 'info');
       }
     } catch (err) {
       urlInput.focus();
-      showToast('URL 입력창에 직접 붙여넣기(Ctrl+V) 해주세요.', 'info');
+      showToast('입력창을 길게 눌러 [붙여넣기]를 해주세요.', 'info');
     }
   });
 
+  // Handle direct paste into URL input (e.g. mobile long-press paste)
+  urlInput.addEventListener('paste', () => {
+    setTimeout(() => {
+      const raw = urlInput.value;
+      if (!raw) return;
+      const { url, hintTitle, hintAddress } = extractUrlAndHints(raw);
+      if (url && url !== raw) {
+        urlInput.value = url;
+      }
+      if (hintTitle && inputTitle && !inputTitle.value) inputTitle.value = hintTitle;
+      if (hintAddress && inputLocation && !inputLocation.value) inputLocation.value = hintAddress;
+      if (url && /^https?:\/\//i.test(url)) {
+        fetchMetadata(url, { hintTitle, hintAddress });
+      }
+    }, 60);
+  });
+
   fetchMetaBtn.addEventListener('click', () => {
-    const url = urlInput.value.trim();
-    if (!url) {
+    const raw = urlInput.value.trim();
+    if (!raw) {
       showToast('웹페이지 URL을 먼저 입력해주세요.', 'error');
       urlInput.focus();
       return;
     }
-    fetchMetadata(url);
+    const { url, hintTitle, hintAddress } = extractUrlAndHints(raw);
+    if (url && url !== raw) urlInput.value = url;
+    if (hintTitle && inputTitle && !inputTitle.value) inputTitle.value = hintTitle;
+    if (hintAddress && inputLocation && !inputLocation.value) inputLocation.value = hintAddress;
+    fetchMetadata(url || raw, { hintTitle, hintAddress });
   });
 
   urlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const url = urlInput.value.trim();
-      if (url) fetchMetadata(url);
+      const raw = urlInput.value.trim();
+      if (raw) {
+        const { url, hintTitle, hintAddress } = extractUrlAndHints(raw);
+        if (url && url !== raw) urlInput.value = url;
+        fetchMetadata(url || raw, { hintTitle, hintAddress });
+      }
     }
   });
 
-  async function fetchMetadata(url) {
+  async function fetchMetadata(url, hints = {}) {
     fetchMetaBtn.classList.add('loading');
     fetchMetaBtn.disabled = true;
 
@@ -209,26 +277,28 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
+        body: JSON.stringify({ url, ...hints })
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        showToast(data.error || '메타데이터 추출에 실패했습니다.', 'error');
+        if (hints.hintTitle && inputTitle && !inputTitle.value) inputTitle.value = hints.hintTitle;
+        if (hints.hintAddress && inputLocation && !inputLocation.value) inputLocation.value = hints.hintAddress;
+        showToast(data.error || '정보를 불러오지 못했습니다. 아래 입력창에 직접 작성해 주세요.', 'error');
         return;
       }
 
       // Populate Extracted Data
-      inputTitle.value = data.title || url;
-      if (inputLocation && data.location) {
-        inputLocation.value = data.location;
+      inputTitle.value = data.title || hints.hintTitle || url;
+      if (inputLocation) {
+        inputLocation.value = data.location || hints.hintAddress || '';
       }
       inputDescription.value = data.description || '';
       previewSiteName.textContent = data.siteName || '웹사이트';
       
       try {
-        const u = new URL(data.url);
+        const u = new URL(data.url || url);
         previewDomain.textContent = u.hostname;
       } catch (e) {
         previewDomain.textContent = '';
@@ -271,14 +341,16 @@ document.addEventListener('DOMContentLoaded', () => {
           selectedCategoryInput.value = data.category;
         }
       } else {
-        autoSuggestCategoryAndTags(data.url, data.title, data.description);
+        autoSuggestCategoryAndTags(data.url || url, data.title, data.description);
       }
 
-      showToast('웹페이지 정보를 성공적으로 불러왔습니다!', 'success');
+      showToast('웹페이지 정보를 성공적으로 불러왔습니다! 🎉', 'success');
 
     } catch (err) {
       console.error(err);
-      showToast('정보를 가져오는 중 네트워크 오류가 발생했습니다.', 'error');
+      if (hints.hintTitle && inputTitle && !inputTitle.value) inputTitle.value = hints.hintTitle;
+      if (hints.hintAddress && inputLocation && !inputLocation.value) inputLocation.value = hints.hintAddress;
+      showToast('정보를 가져오는 중 네트워크 오류가 발생했습니다. 직접 수정이 가능합니다.', 'error');
     } finally {
       fetchMetaBtn.classList.remove('loading');
       fetchMetaBtn.disabled = false;

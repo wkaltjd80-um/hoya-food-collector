@@ -1400,6 +1400,19 @@ body {
     gap: 10px;
     text-align: center;
   }
+  .toast-container {
+    bottom: calc(20px + env(safe-area-inset-bottom, 20px));
+    left: 16px;
+    right: 16px;
+    align-items: center;
+  }
+  .toast {
+    min-width: unset;
+    width: 100%;
+    max-width: 100%;
+    font-size: 13px;
+    padding: 12px 16px;
+  }
 }
 
 /* Candidate Photos Gallery in Modal */

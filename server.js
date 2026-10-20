@@ -90,229 +90,458 @@ function formatNotionId(rawId) {
   return rawId;
 }
 
-// Helper to fetch real photos from Naver Place
-async function fetchRealNaverPlaceData(targetUrl) {
-  let placeId = null;
-  const match = targetUrl.match(/(?:place|restaurant)\/(\d+)/i) || targetUrl.match(/id=(\d+)/i);
+function cleanTitle(raw) {
+  if (!raw) return '';
+  return decodeHtmlEntities(raw)
+    .replace(/(?:[\s\-_|:]+네이버\s*(?:지도|플레이스|MY PLACE)?|[\s\-_|:]*네이버\s*(?:지도|플레이스|MY PLACE))$/i, '')
+    .replace(/(?:[\s\-_|:]+카카오맵?|[\s\-_|:]*카카오맵)$/i, '')
+    .replace(/(?:[\s\-_|:]+Naver\s*(?:Map|Place)?|[\s\-_|:]*Naver\s*(?:Map|Place))$/i, '')
+    .trim();
+}
+
+function extractUrlAndHints(rawInput) {
+  if (!rawInput) return { url: '', hintTitle: '', hintAddress: '' };
+  
+  const text = String(rawInput).trim();
+  const urlRegex = /(https?:\/\/[^\s"'<>()]+)/i;
+  const match = text.match(urlRegex);
+  
+  let url = '';
+  let hintTitle = '';
+  let hintAddress = '';
+  
   if (match) {
-    placeId = match[1];
+    url = match[1].replace(/[.,!?;:]+$/, '');
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.includes(url) && !l.startsWith('http'));
+    for (let line of lines) {
+      line = line.replace(/^\[(네이버\s*지도|카카오맵|네이버\s*플레이스|네이버\s*블로그)\]\s*/i, '').trim();
+      if (!line) continue;
+      if (/(동|읍|면|리|구|로|길|시|도)\s+\d+/.test(line) || /^[가-힣]+(?:시|군|구)/.test(line)) {
+        if (!hintAddress) hintAddress = line;
+      } else if (!hintTitle && line.length < 50) {
+        hintTitle = line;
+      }
+    }
+  } else {
+    const domainMatch = text.match(/((?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:\/[^\s"'<>()]*)?)/i);
+    if (domainMatch) {
+      url = 'https://' + domainMatch[1].replace(/[.,!?;:]+$/, '');
+    } else {
+      url = text;
+      if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+    }
+  }
+  
+  return { url, hintTitle, hintAddress };
+}
+
+async function resolveShortUrl(targetUrl) {
+  let resolvedUrl = targetUrl;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(targetUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      }
+    });
+    clearTimeout(timeoutId);
+    if (res.url) resolvedUrl = res.url;
+    
+    if (resolvedUrl.includes('naver.me') || resolvedUrl.includes('kko.kakao.com')) {
+      const html = await res.text();
+      const metaRefresh = html.match(/content=["']\d+;\s*url=([^"']+)["']/i);
+      if (metaRefresh && metaRefresh[1]) {
+        resolvedUrl = metaRefresh[1];
+      }
+      const placeIdMatch = html.match(/(?:place|restaurant)\/(\d+)/i) || html.match(/id=(\d+)/i);
+      if (placeIdMatch) {
+        resolvedUrl = `https://m.place.naver.com/restaurant/${placeIdMatch[1]}/home`;
+      }
+    }
+  } catch (e) {
+    console.warn('Short url resolution error:', e.message);
+  }
+  return resolvedUrl;
+}
+
+// Scrape high-quality Naver Place details and real food photos
+async function scrapeNaverPlace(targetUrl, hints = {}) {
+  let currentUrl = targetUrl;
+  let placeId = null;
+
+  const match = currentUrl.match(/(?:place|restaurant)\/(\d+)/i) || currentUrl.match(/id=(\d+)/i);
+  if (match) placeId = match[1];
+
+  if (!placeId && currentUrl.includes('naver.me')) {
+    currentUrl = await resolveShortUrl(currentUrl);
+    const m = currentUrl.match(/(?:place|restaurant)\/(\d+)/i) || currentUrl.match(/id=(\d+)/i);
+    if (m) placeId = m[1];
   }
 
-  // Handle naver.me short links
-  if (!placeId && targetUrl.includes('naver.me')) {
+  // Handle Search URL
+  if (!placeId && currentUrl.includes('/search/')) {
     try {
-      const headRes = await fetch(targetUrl, { redirect: 'follow' });
-      const m = headRes.url.match(/(?:place|restaurant)\/(\d+)/i);
-      if (m) placeId = m[1];
+      const decoded = decodeURIComponent(currentUrl);
+      const searchMatch = decoded.match(/\/search\/([^/?#]+)/);
+      if (searchMatch && searchMatch[1]) {
+        const rawSearch = searchMatch[1].trim();
+        const parts = rawSearch.split(/\s+/);
+        let location = parts.length > 1 ? parts[0] : '';
+        return {
+          title: rawSearch,
+          category: '한식',
+          location: location || hints.hintAddress || '',
+          description: `${rawSearch} - 네이버 지도 검색 정보`,
+          image: '',
+          extraImages: [],
+          siteName: '네이버 지도'
+        };
+      }
     } catch (e) {}
   }
 
   if (placeId) {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
       const res = await fetch(`https://m.place.naver.com/restaurant/${placeId}/home`, {
+        signal: controller.signal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'ko-KR,ko;q=0.9'
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
         }
       });
+      clearTimeout(timeoutId);
+
       if (res.ok) {
-        const text = await res.text();
-        const ogTitle = text.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i);
-        const ogImg = text.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']*)["']/i);
-        const ogDesc = text.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i);
-
-        let realImg = '';
-        if (ogImg && ogImg[1]) {
-          const raw = decodeHtmlEntities(ogImg[1]);
-          const srcMatch = raw.match(/src=([^&]+)/);
-          realImg = srcMatch ? decodeURIComponent(srcMatch[1]) : raw;
-        }
-
-        let title = ogTitle ? decodeHtmlEntities(ogTitle[1]) : '';
-        title = title.replace(/\s*:\s*네이버 플레이스.*$/, '').trim();
-
-        // Extract candidate photos from the restaurant
-        const photoMatches = text.match(/https:\/\/(?:ldb-phinf|search)\.pstatic\.net\/[^"'\s<>]+\.(?:jpg|jpeg|png|webp)/gi) || [];
-        const extraImages = [];
-        const seen = new Set();
-        if (realImg) {
-          extraImages.push(realImg);
-          seen.add(realImg);
-        }
-        for (const raw of photoMatches) {
-          let clean = decodeHtmlEntities(raw);
-          if (clean.includes('src=')) {
-            const sm = clean.match(/src=([^&]+)/);
-            if (sm) clean = decodeURIComponent(sm[1]);
-          }
-          if (!seen.has(clean) && !clean.includes('og-map') && !clean.includes('static/map') && !clean.includes('icon')) {
-            seen.add(clean);
-            extraImages.push(clean);
-          }
-          if (extraImages.length >= 10) break;
-        }
-
-        return {
-          title,
-          image: realImg || extraImages[0] || '',
-          extraImages,
-          description: ogDesc ? decodeHtmlEntities(ogDesc[1]) : '',
-          placeId
+        const html = await res.text();
+        const extracted = {
+          title: '',
+          category: '',
+          location: '',
+          description: '',
+          image: '',
+          extraImages: [],
+          siteName: '네이버 플레이스'
         };
+
+        // 1. Parse window.__APOLLO_STATE__
+        const stateMatch = html.match(/window\.__APOLLO_STATE__\s*=\s*({.+?});/s);
+        if (stateMatch) {
+          try {
+            const data = JSON.parse(stateMatch[1]);
+            const placeKey = `PlaceDetailBase:${placeId}`;
+            const placeData = data[placeKey] || Object.values(data).find(v => v?.__typename === 'PlaceDetailBase');
+            
+            if (placeData) {
+              extracted.title = cleanTitle(placeData.name);
+              
+              const rawCat = placeData.category || '';
+              if (/국밥|찌개|불고기|갈비|삼겹살|고기|백반|김치|순대|냉면|비빔밥|한식|보쌈|족발/i.test(rawCat)) {
+                extracted.category = '한식';
+              } else if (/짜장|짬뽕|탕수육|마라|중화/i.test(rawCat)) {
+                extracted.category = '중식';
+              } else if (/스시|초밥|라멘|우동|돈까스|일식/i.test(rawCat)) {
+                extracted.category = '일식';
+              } else if (/파스타|피자|스테이크|양식|이탈리/i.test(rawCat)) {
+                extracted.category = '이탈리안';
+              } else if (/회|해물|조개|게장|생선|대게/i.test(rawCat)) {
+                extracted.category = '해산물';
+              } else if (/카페|커피|베이커리|디저트/i.test(rawCat)) {
+                extracted.category = '카페';
+              } else {
+                extracted.category = rawCat || '한식';
+              }
+
+              const fullAddr = placeData.address || placeData.roadAddress || '';
+              if (fullAddr) {
+                const words = fullAddr.split(/\s+/);
+                const dongWord = words.find(w => /(동|읍|면|리)$/.test(w)) || words.find(w => /(구|로|길)$/.test(w));
+                extracted.location = dongWord || words[1] || words[0];
+              }
+
+              const descParts = [];
+              if (placeData.visitorReviewsTotal) descParts.push(`방문자리뷰 ${placeData.visitorReviewsTotal.toLocaleString()}명`);
+              if (placeData.cafeBlogReviewsTotal) descParts.push(`블로그리뷰 ${placeData.cafeBlogReviewsTotal.toLocaleString()}개`);
+              if (placeData.microReviews && placeData.microReviews[0]) descParts.push(`"${placeData.microReviews[0]}"`);
+              if (placeData.roadAddress) descParts.push(`📍 ${placeData.roadAddress}`);
+              if (placeData.virtualPhone || placeData.phone) descParts.push(`📞 ${placeData.virtualPhone || placeData.phone}`);
+              extracted.description = descParts.join(' · ') || `${extracted.title} - 네이버 플레이스 장소 정보`;
+            }
+
+            const photos = [];
+            for (const [k, v] of Object.entries(data)) {
+              if (v && typeof v === 'object') {
+                const img = v.originalUrl || v.thumbnailUrl || v.imageUrl;
+                if (img && typeof img === 'string' && img.startsWith('http') && !img.includes('static.naver')) {
+                  let cleanImg = img.split('?')[0].replace(/&amp;/g, '&');
+                  if (!photos.includes(cleanImg)) photos.push(cleanImg);
+                }
+              }
+            }
+
+            if (photos.length > 0) {
+              extracted.image = photos[0];
+              extracted.extraImages = photos.slice(0, 10);
+            }
+          } catch (e) {}
+        }
+
+        if (!extracted.title) {
+          const ogTitleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i) ||
+                               html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:title["']/i);
+          if (ogTitleMatch && ogTitleMatch[1]) {
+            extracted.title = cleanTitle(ogTitleMatch[1]);
+          }
+        }
+
+        if (!extracted.image) {
+          const ogImgMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']*)["']/i) ||
+                             html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:image["']/i);
+          if (ogImgMatch && ogImgMatch[1]) {
+            let rawImg = decodeHtmlEntities(ogImgMatch[1]);
+            const srcMatch = rawImg.match(/src=([^&]+)/);
+            if (srcMatch) {
+              extracted.image = decodeURIComponent(srcMatch[1]);
+            } else {
+              extracted.image = rawImg;
+            }
+            if (extracted.image && !extracted.extraImages.includes(extracted.image)) {
+              extracted.extraImages.unshift(extracted.image);
+            }
+          }
+        }
+
+        if (extracted.title) {
+          if (!extracted.location && hints.hintAddress) extracted.location = hints.hintAddress;
+          return extracted;
+        }
       }
     } catch (e) {
-      console.warn('Place fetch error:', e.message);
+      console.warn('Failed scraping place:', e.message);
     }
   }
+
+  if (hints.hintTitle) {
+    return {
+      title: hints.hintTitle,
+      category: '한식',
+      location: hints.hintAddress || '',
+      description: `${hints.hintTitle} - 네이버 지도`,
+      image: '',
+      extraImages: [],
+      siteName: '네이버 지도'
+    };
+  }
+
   return null;
 }
 
-// Robust HTML metadata extractor with special Naver Map & Place handling
-async function extractMetadata(html, targetUrl) {
+// Scrape Kakao Map details
+async function scrapeKakaoPlace(targetUrl, hints = {}) {
+  let currentUrl = targetUrl;
+  if (currentUrl.includes('kko.kakao.com')) {
+    currentUrl = await resolveShortUrl(currentUrl);
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    const res = await fetch(currentUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      }
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const html = await res.text();
+      const extracted = {
+        title: '',
+        category: '한식',
+        location: '',
+        description: '',
+        image: '',
+        extraImages: [],
+        siteName: '카카오맵'
+      };
+
+      const ogTitleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i) ||
+                           html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:title["']/i);
+      if (ogTitleMatch && ogTitleMatch[1]) {
+        extracted.title = cleanTitle(ogTitleMatch[1]);
+      }
+
+      const ogDescMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i) ||
+                          html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:description["']/i);
+      if (ogDescMatch && ogDescMatch[1]) {
+        const fullAddr = decodeHtmlEntities(ogDescMatch[1]);
+        extracted.description = fullAddr;
+        const words = fullAddr.split(/\s+/);
+        const dongWord = words.find(w => /(동|읍|면|리)$/.test(w)) || words.find(w => /(구|로|길)$/.test(w));
+        extracted.location = dongWord || words[1] || words[0] || '';
+      }
+
+      const ogImgMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']*)["']/i) ||
+                         html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:image["']/i);
+      if (ogImgMatch && ogImgMatch[1]) {
+        let img = decodeHtmlEntities(ogImgMatch[1]);
+        if (img.startsWith('//')) img = 'https:' + img;
+        extracted.image = img;
+        extracted.extraImages.push(img);
+      }
+
+      if (extracted.title) {
+        if (!extracted.location && hints.hintAddress) extracted.location = hints.hintAddress;
+        return extracted;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed scraping kakao place:', e.message);
+  }
+
+  if (hints.hintTitle) {
+    return {
+      title: hints.hintTitle,
+      category: '한식',
+      location: hints.hintAddress || '',
+      description: `${hints.hintTitle} - 카카오맵`,
+      image: '',
+      extraImages: [],
+      siteName: '카카오맵'
+    };
+  }
+
+  return null;
+}
+
+// Robust HTML metadata extractor with zero crashing
+async function extractMetadata(html, targetUrl, hints = {}) {
+  let hostname = '';
+  try {
+    const parsed = new URL(targetUrl);
+    hostname = parsed.hostname;
+  } catch (e) {
+    hostname = 'unknown';
+  }
+
   const result = {
     url: targetUrl,
-    title: '',
+    title: hints.hintTitle || '',
     description: '',
     image: '',
     extraImages: [],
-    siteName: '',
-    favicon: '',
-    location: '',
+    siteName: hostname.replace(/^www\./, ''),
+    favicon: hostname && hostname !== 'unknown' ? `https://www.google.com/s2/favicons?domain=${hostname}&sz=64` : '',
+    location: hints.hintAddress || '',
     category: '한식'
   };
 
-  try {
-    const parsedUrl = new URL(targetUrl);
-    result.siteName = parsedUrl.hostname.replace(/^www\./, '');
-    result.favicon = `https://www.google.com/s2/favicons?domain=${parsedUrl.hostname}&sz=64`;
-
-    // 1. If Naver Place / Naver Map with place ID, fetch real photo directly from Naver Place
-    if (targetUrl.includes('naver.com') || targetUrl.includes('naver.me')) {
-      const placeData = await fetchRealNaverPlaceData(targetUrl);
-      if (placeData) {
-        if (placeData.title) result.title = placeData.title;
-        if (placeData.image) result.image = placeData.image;
-        if (placeData.extraImages) result.extraImages = placeData.extraImages;
-        if (placeData.description) result.description = placeData.description;
-        result.siteName = '네이버 플레이스';
-      }
+  const isNaverMap = targetUrl.includes('map.naver.com') || targetUrl.includes('place.naver.com') || targetUrl.includes('naver.me');
+  if (isNaverMap) {
+    const naverData = await scrapeNaverPlace(targetUrl, hints);
+    if (naverData) {
+      if (naverData.title) result.title = naverData.title;
+      if (naverData.category) result.category = naverData.category;
+      if (naverData.location) result.location = naverData.location;
+      if (naverData.image) result.image = naverData.image;
+      if (naverData.extraImages?.length) result.extraImages = naverData.extraImages;
+      if (naverData.description) result.description = naverData.description;
+      result.siteName = naverData.siteName || '네이버 플레이스';
+      return result;
     }
-
-    // 2. Special Handling for Naver Map search URLs
-    if (targetUrl.includes('map.naver.com')) {
-      try {
-        const decoded = decodeURIComponent(targetUrl);
-        const searchMatch = decoded.match(/\/search\/([^/?#]+)/);
-        if (searchMatch && searchMatch[1]) {
-          const rawSearch = searchMatch[1].trim();
-          if (!result.title) result.title = rawSearch;
-          result.siteName = '네이버 지도';
-          if (!result.description) result.description = `${rawSearch} - 네이버 지도 장소 정보`;
-          
-          const parts = rawSearch.split(/\s+/);
-          if (parts.length > 1) {
-            result.location = parts[0]; // e.g. 구산동, 삼계동, 율하, 주촌
-          }
-
-          // Category inference
-          if (/국밥|찌개|불고기|갈비|삼겹살|고기|백반|김치|순대|냉면|비빔밥/i.test(rawSearch)) {
-            result.category = '한식';
-          } else if (/짜장|짬뽕|탕수육|마라|중화/i.test(rawSearch)) {
-            result.category = '중식';
-          } else if (/스시|초밥|라멘|우동|돈까스|일식/i.test(rawSearch)) {
-            result.category = '일식';
-          } else if (/파스타|피자|스테이크|이탈리/i.test(rawSearch)) {
-            result.category = '이탈리안';
-          } else if (/회|해물|조개|게장|생선|대게/i.test(rawSearch)) {
-            result.category = '해산물';
-          } else if (/카페|커피|베이커리|디저트/i.test(rawSearch)) {
-            result.category = '카페';
-          }
-        }
-      } catch (e) {}
-    }
-
-    // 2. Title extraction from HTML
-    if (!result.title) {
-      const ogTitleMatch = html.match(/<meta[^>]+(?:property|name)=["'](?:og:title|twitter:title)["'][^>]+content=["']([^"']*)["']/i) ||
-                           html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["'](?:og:title|twitter:title)["']/i);
-      if (ogTitleMatch && ogTitleMatch[1]) {
-        result.title = decodeHtmlEntities(ogTitleMatch[1]);
-      } else {
-        const titleTagMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-        if (titleTagMatch && titleTagMatch[1]) {
-          result.title = decodeHtmlEntities(titleTagMatch[1]);
-        } else {
-          result.title = targetUrl;
-        }
-      }
-    }
-
-    // 3. Description extraction
-    if (!result.description) {
-      const ogDescMatch = html.match(/<meta[^>]+(?:property|name)=["'](?:og:description|twitter:description|description)["'][^>]+content=["']([^"']*)["']/i) ||
-                          html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["'](?:og:description|twitter:description|description)["']/i);
-      if (ogDescMatch && ogDescMatch[1]) {
-        result.description = decodeHtmlEntities(ogDescMatch[1]);
-      }
-    }
-
-    // 4. Image extraction
-    const ogImgMatch = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']*)["']/i) ||
-                       html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["'](?:og:image|twitter:image)["']/i);
-    if (ogImgMatch && ogImgMatch[1]) {
-      let rawImg = ogImgMatch[1].trim();
-      if (rawImg.startsWith('http')) {
-        result.image = rawImg;
-      } else {
-        try {
-          result.image = new URL(rawImg, parsedUrl.origin).href;
-        } catch (e) {}
-      }
-    }
-
-    // 5. Site Name
-    const ogSiteName = html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']*)["']/i);
-    if (ogSiteName && ogSiteName[1]) {
-      result.siteName = decodeHtmlEntities(ogSiteName[1]);
-    }
-
-    // 6. Favicon
-    const iconMatch = html.match(/<link[^>]+rel=["'](?:shortcut icon|icon)["'][^>]+href=["']([^"']*)["']/i);
-    if (iconMatch && iconMatch[1]) {
-      let rawFavicon = iconMatch[1].trim();
-      if (rawFavicon.startsWith('http')) {
-        result.favicon = rawFavicon;
-      } else {
-        try {
-          result.favicon = new URL(rawFavicon, parsedUrl.origin).href;
-        } catch (e) {}
-      }
-    }
-
-    // 7. Beautiful default food image fallback if no image found for restaurant/food search
-    if (!result.image && (targetUrl.includes('map.naver.com') || /맛집|식당|푸드|요리|국밥/i.test(result.title))) {
-      result.image = 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80';
-    }
-
-  } catch (err) {
-    console.error('Metadata parse error:', err.message);
   }
 
+  const isKakaoMap = targetUrl.includes('map.kakao.com') || targetUrl.includes('kko.kakao.com') || targetUrl.includes('place.map.kakao.com');
+  if (isKakaoMap) {
+    const kakaoData = await scrapeKakaoPlace(targetUrl, hints);
+    if (kakaoData) {
+      if (kakaoData.title) result.title = kakaoData.title;
+      if (kakaoData.category) result.category = kakaoData.category;
+      if (kakaoData.location) result.location = kakaoData.location;
+      if (kakaoData.image) result.image = kakaoData.image;
+      if (kakaoData.extraImages?.length) result.extraImages = kakaoData.extraImages;
+      if (kakaoData.description) result.description = kakaoData.description;
+      result.siteName = kakaoData.siteName || '카카오맵';
+      return result;
+    }
+  }
+
+  let docHtml = html;
+  if (!docHtml && targetUrl && /^https?:\/\//i.test(targetUrl)) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(targetUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) docHtml = await res.text();
+    } catch (e) {}
+  }
+
+  if (docHtml) {
+    const ogTitleMatch = docHtml.match(/<meta[^>]+(?:property|name)=["'](?:og:title|twitter:title)["'][^>]+content=["']([^"']*)["']/i) ||
+                         docHtml.match(/<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["'](?:og:title|twitter:title)["']/i);
+    if (ogTitleMatch && ogTitleMatch[1]) {
+      result.title = decodeHtmlEntities(ogTitleMatch[1]);
+    } else if (!result.title) {
+      const titleTagMatch = docHtml.match(/<title[^>]*>([^<]*)<\/title>/i);
+      if (titleTagMatch && titleTagMatch[1]) {
+        result.title = decodeHtmlEntities(titleTagMatch[1]);
+      }
+    }
+
+    const ogDescMatch = docHtml.match(/<meta[^>]+(?:property|name)=["'](?:og:description|twitter:description|description)["'][^>]+content=["']([^"']*)["']/i) ||
+                        docHtml.match(/<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["'](?:og:description|twitter:description|description)["']/i);
+    if (ogDescMatch && ogDescMatch[1]) {
+      result.description = decodeHtmlEntities(ogDescMatch[1]);
+    }
+
+    const ogImgMatch = docHtml.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']*)["']/i) ||
+                       docHtml.match(/<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["'](?:og:image|twitter:image)["']/i);
+    if (ogImgMatch && ogImgMatch[1]) {
+      let rawImg = decodeHtmlEntities(ogImgMatch[1]);
+      if (rawImg.startsWith('http')) {
+        result.image = rawImg;
+      } else if (rawImg.startsWith('//')) {
+        result.image = 'https:' + rawImg;
+      } else {
+        try {
+          result.image = new URL(rawImg, targetUrl).href;
+        } catch (e) {}
+      }
+      if (result.image) result.extraImages.push(result.image);
+    }
+  }
+
+  if (!result.title) result.title = hints.hintTitle || targetUrl;
   return result;
 }
 
 function decodeHtmlEntities(str) {
   if (!str) return '';
-  return str
+  return String(str)
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
+    .replace(/&#x2F;/g, '/')
+    .replace(/&#x1c;/gi, '')
     .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
     .trim();
 }
 
@@ -451,56 +680,34 @@ const server = http.createServer(async (req, res) => {
   try {
     // 1. API: Extract metadata from web page
     if (pathname === '/api/extract' && method === 'POST') {
-      const { url } = await parseJsonBody();
-      if (!url) {
+      const body = await parseJsonBody();
+      const rawInput = body.url ? String(body.url).trim() : '';
+      if (!rawInput) {
         return sendJson(400, { error: 'URL을 입력해주세요.' });
       }
 
-      let targetUrl = url.trim();
-      if (!/^https?:\/\//i.test(targetUrl)) {
-        targetUrl = 'https://' + targetUrl;
-      }
-
-      // If it's a Naver map / place URL, we can parse immediately
-      if (targetUrl.includes('map.naver.com') || targetUrl.includes('place.naver.com') || targetUrl.includes('naver.me')) {
-        const meta = await extractMetadata('', targetUrl);
-        return sendJson(200, meta);
-      }
+      const { url: cleanUrl, hintTitle, hintAddress } = extractUrlAndHints(rawInput);
+      const effectiveHints = {
+        hintTitle: body.hintTitle || hintTitle,
+        hintAddress: body.hintAddress || hintAddress
+      };
 
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 9000);
-
-        const response = await fetch(targetUrl, {
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
-          }
-        });
-        clearTimeout(timeoutId);
-
-        const html = await response.text();
-        const meta = await extractMetadata(html, targetUrl);
+        const meta = await extractMetadata('', cleanUrl, effectiveHints);
         return sendJson(200, meta);
-
       } catch (err) {
-        console.warn('Scraping error:', err.message);
-        try {
-          const parsed = new URL(targetUrl);
-          return sendJson(200, {
-            url: targetUrl,
-            title: parsed.hostname + ' 웹 링크',
-            description: '웹페이지 상세 정보를 자동으로 불러오지 못했습니다. 직접 입력하여 저장할 수 있습니다.',
-            image: '',
-            siteName: parsed.hostname,
-            favicon: `https://www.google.com/s2/favicons?domain=${parsed.hostname}&sz=64`,
-            isPartial: true
-          });
-        } catch (e) {
-          return sendJson(400, { error: '올바른 웹 URL 주소가 아닙니다.' });
-        }
+        console.warn('Scraping error fallback:', err.message);
+        return sendJson(200, {
+          url: cleanUrl || rawInput,
+          title: effectiveHints.hintTitle || cleanUrl || rawInput,
+          description: '웹페이지 상세 정보를 자동으로 불러오지 못했습니다. 직접 입력하여 저장할 수 있습니다.',
+          image: '',
+          extraImages: [],
+          siteName: '웹 링크',
+          favicon: '',
+          location: effectiveHints.hintAddress || '',
+          category: '한식'
+        });
       }
     }
 
