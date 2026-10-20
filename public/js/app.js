@@ -113,6 +113,15 @@ document.addEventListener('DOMContentLoaded', () => {
       if (target) headers['x-notion-target-id'] = target;
 
       const res = await fetch('/api/status', { headers });
+      if (res.status === 401) {
+        connectionStatus.className = 'status-pill status-warning';
+        connectionStatus.innerHTML = `
+          <span class="status-dot"></span>
+          <span class="status-text"><i class="fa-solid fa-lock"></i> Netlify 사이트 비공개 상태</span>
+        `;
+        showToast('Netlify 대시보드(Site configuration > Visitor access)에서 사이트를 [Public]으로 변경해야 외부에서 정상 접속됩니다.', 'error');
+        return;
+      }
       const data = await res.json();
 
       if (footerTargetId && (data.targetId || target)) {
@@ -198,6 +207,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
       }
     }
+
+    // Instagram Special Handle Extraction
+    if (/instagram\.com/i.test(url)) {
+      const postMatch = url.match(/instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/i);
+      const userMatch = url.match(/instagram\.com\/([a-zA-Z0-9._]+)/i);
+      if (postMatch) {
+        if (!hintTitle) hintTitle = `인스타그램 게시물 (${postMatch[1]})`;
+      } else if (userMatch && !['explore', 'reels', 'stories', 'accounts', 'direct'].includes(userMatch[1].toLowerCase())) {
+        if (!hintTitle) hintTitle = `@${userMatch[1]} (인스타그램)`;
+      }
+    }
     
     return { url, hintTitle, hintAddress };
   }
@@ -280,7 +300,22 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ url, ...hints })
       });
 
-      const data = await res.json();
+      if (res.status === 401) {
+        if (hints.hintTitle && inputTitle && !inputTitle.value) inputTitle.value = hints.hintTitle;
+        if (hints.hintAddress && inputLocation && !inputLocation.value) inputLocation.value = hints.hintAddress;
+        showToast('Netlify 사이트가 [비공개/Site Protection] 상태여서 요청이 차단되었습니다. Netlify 대시보드(Site configuration > Visitor access)에서 [Public]으로 설정해 주세요.', 'error');
+        return;
+      }
+
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        if (hints.hintTitle && inputTitle && !inputTitle.value) inputTitle.value = hints.hintTitle;
+        if (hints.hintAddress && inputLocation && !inputLocation.value) inputLocation.value = hints.hintAddress;
+        showToast('서버에서 올바른 응답을 받지 못했습니다. 직접 입력해 주세요.', 'error');
+        return;
+      }
 
       if (!res.ok) {
         if (hints.hintTitle && inputTitle && !inputTitle.value) inputTitle.value = hints.hintTitle;

@@ -474,6 +474,22 @@ async function extractMetadata(html, targetUrl, hints = {}) {
     }
   }
 
+  const isInstagram = targetUrl.includes('instagram.com');
+  if (isInstagram) {
+    const postMatch = targetUrl.match(/instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/i);
+    const userMatch = targetUrl.match(/instagram\.com\/([a-zA-Z0-9._]+)/i);
+    result.siteName = 'Instagram';
+    result.category = '기타';
+    if (postMatch) {
+      result.title = hints.hintTitle || `인스타그램 맛집 게시물 (${postMatch[1]})`;
+      result.description = `인스타그램 릴스/피드 링크 (${targetUrl})`;
+    } else if (userMatch && !['explore', 'reels', 'stories', 'accounts', 'direct'].includes(userMatch[1].toLowerCase())) {
+      result.title = hints.hintTitle || `@${userMatch[1]} (인스타그램)`;
+      result.description = `인스타그램 @${userMatch[1]} 프로필 / 추천 맛집`;
+    }
+    return result;
+  }
+
   let docHtml = html;
   if (!docHtml && targetUrl && /^https?:\/\//i.test(targetUrl)) {
     try {
