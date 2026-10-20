@@ -1,0 +1,21 @@
+{
+  "name": "hoya-food-explorer",
+  "version": "1.0.0",
+  "description": "호야 맛집 탐험! - 노션 웹 수집기 & PWA 모바일 앱",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "notion",
+    "collector",
+    "food",
+    "pwa",
+    "netlify"
+  ],
+  "author": "Hoya",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

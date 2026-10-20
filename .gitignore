@@ -1,0 +1,7 @@
+node_modules/
+.netlify/
+data/config.json
+data/history.json
+.DS_Store
+Thumbs.db
+*.log

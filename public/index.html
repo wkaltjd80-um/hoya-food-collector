@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notion Web Collector | 웹 링크 노션 자동 정리 대시보드</title>
+  <meta name="description" content="웹페이지 링크와 메모를 한곳에서 스마트하게 정리하고 노션에 실시간으로 저장하는 웹 애플리케이션">
+
+  <!-- Google Fonts & Font Awesome Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Pretendard:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  
+  <!-- PWA & Mobile App Settings -->
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="theme-color" content="#6366f1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="호야 맛집">
+  
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Ambient background lighting effects -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+  <div class="ambient-glow glow-3"></div>
+
+  <!-- Main Container -->
+  <div class="app-layout">
+    
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand-logo">
+          <div class="logo-icon">
+            <img src="/apple-touch-icon.png" alt="호야" class="header-mascot-img">
+          </div>
+          <div class="logo-text">
+            <h1>호야 맛집 <span>Collector</span></h1>
+            <p class="subtitle">스마트 웹 스크랩 & 노션 자동 정리</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <!-- Connection Status Pill -->
+        <div id="connectionStatus" class="status-pill status-loading" title="노션 연동 상태 확인 중">
+          <span class="status-dot"></span>
+          <span class="status-text">연동 상태 확인 중...</span>
+        </div>
+
+        <button id="openMobileModalBtn" class="btn btn-mobile-app" title="휴대폰 접속 및 귀여운 앱 아이콘 설치">
+          <i class="fa-solid fa-mobile-screen-button"></i> 📱 휴대폰 앱 설치
+        </button>
+
+        <button id="openGuideBtn" class="btn btn-outline" title="노션 연동 방법 확인">
+          <i class="fa-solid fa-circle-question"></i> 연동 가이드
+        </button>
+
+        <button id="openSettingsBtn" class="btn btn-secondary" title="노션 API 및 타겟 설정">
+          <i class="fa-solid fa-sliders"></i> 설정
+        </button>
+
+        <a id="openNotionLink" href="https://app.notion.com/p/166ad860bd648097afedff31acfa1fb5" target="_blank" class="btn btn-primary-glass" title="내 노션 페이지 바로가기">
+          <i class="fa-solid fa-arrow-up-right-from-square"></i> 내 노션 열기
+        </a>
+      </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="main-content">
+      
+      <!-- Left Column: Input Form & Smart Extractor -->
+      <section class="card collector-card">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="badge badge-accent">Quick Capture</span>
+            <h2>웹 링크 저장 & 자동 정리</h2>
+          </div>
+          <p class="card-desc">웹 링크를 입력하면 제목, 요약, 이미지를 자동으로 불러와 노션에 깔끔하게 저장합니다.</p>
+        </div>
+
+        <!-- Quick API Key Banner when not connected -->
+        <div id="quickSetupBanner" class="quick-setup-banner">
+          <div class="banner-left">
+            <i class="fa-solid fa-key"></i>
+            <div>
+              <strong>노션 실시간 저장 키가 필요합니다</strong>
+              <span>복사하신 시크릿 키를 등록하시면 노션으로 바로 전송됩니다.</span>
+            </div>
+          </div>
+          <button type="button" id="openSettingsFromBanner" class="btn btn-sm-accent">
+            <i class="fa-solid fa-sliders"></i> 설정창 열기
+          </button>
+        </div>
+
+        <form id="collectorForm" class="collector-form" onsubmit="return false;">
+          <!-- URL Input Bar -->
+          <div class="input-group-url">
+            <div class="url-input-wrapper">
+              <i class="fa-solid fa-link input-icon"></i>
+              <input type="url" id="urlInput" placeholder="저장할 웹페이지 URL을 입력하거나 붙여넣으세요 (예: https://...)" required autocomplete="off">
+              <button type="button" id="pasteBtn" class="inner-action-btn" title="클립보드에서 붙여넣기">
+                <i class="fa-regular fa-clipboard"></i> 붙여넣기
+              </button>
+            </div>
+            <button type="button" id="fetchMetaBtn" class="btn btn-accent">
+              <span class="btn-text"><i class="fa-solid fa-wand-magic-sparkles"></i> 정보 가져오기</span>
+              <span class="btn-loader"><i class="fa-solid fa-circle-notch fa-spin"></i> 분석 중...</span>
+            </button>
+          </div>
+
+          <!-- Metadata Extraction Preview Box -->
+          <div id="previewCard" class="extracted-preview-box">
+            <div class="preview-header">
+              <span class="preview-badge"><i class="fa-solid fa-eye"></i> 노션에 저장될 미리보기</span>
+              <div class="preview-actions">
+                <button type="button" id="editToggleBtn" class="btn-text-sm"><i class="fa-solid fa-pen"></i> 수정</button>
+              </div>
+            </div>
+
+            <div class="preview-content-layout">
+              <div class="preview-text-col">
+                <div class="site-tag-row">
+                  <img id="previewFavicon" src="https://www.google.com/s2/favicons?domain=notion.so&sz=32" alt="favicon" class="site-favicon">
+                  <span id="previewSiteName" class="site-name">웹사이트</span>
+                  <span id="previewDomain" class="site-domain">domain.com</span>
+                </div>
+                
+                <div class="field-group">
+                  <label for="inputTitle" class="field-label">식당 / 장소 이름</label>
+                  <input type="text" id="inputTitle" class="form-input" placeholder="예: 구산동 돼지국밥">
+                </div>
+
+                <div class="field-group">
+                  <label for="inputLocation" class="field-label"><i class="fa-solid fa-location-dot"></i> 위치 / 동네</label>
+                  <input type="text" id="inputLocation" class="form-input" placeholder="예: 구산동, 율하, 주촌, 삼계동 등">
+                </div>
+
+                <div class="field-group">
+                  <label for="inputDescription" class="field-label">상세 소개 / 요약</label>
+                  <textarea id="inputDescription" class="form-textarea" rows="2" placeholder="웹페이지 핵심 요약"></textarea>
+                </div>
+              </div>
+
+              <div id="previewImageContainer" class="preview-image-col">
+                <img id="previewImage" src="" alt="썸네일 미리보기" class="preview-thumbnail">
+                <div id="noImagePlaceholder" class="no-image-box">
+                  <i class="fa-regular fa-image"></i>
+                  <span>대표 사진 없음</span>
+                </div>
+                <button type="button" id="changePhotoBtn" class="change-photo-btn" title="사진 변경 또는 이미지 URL 직접 입력">
+                  <i class="fa-solid fa-camera"></i> 사진 변경
+                </button>
+              </div>
+            </div>
+
+            <!-- Organization Controls -->
+            <div class="organization-section">
+              <div class="org-row">
+                <div class="org-field category-field">
+                  <label class="field-label"><i class="fa-solid fa-utensils"></i> 요리 종류 (카테고리)</label>
+                  <div class="category-pills" id="categoryPills">
+                    <button type="button" class="cat-pill active" data-category="한식">🍚 한식</button>
+                    <button type="button" class="cat-pill" data-category="이탈리안">🍝 이탈리안</button>
+                    <button type="button" class="cat-pill" data-category="중식">🥟 중식</button>
+                    <button type="button" class="cat-pill" data-category="일식">🍣 일식</button>
+                    <button type="button" class="cat-pill" data-category="해산물">🦐 해산물</button>
+                    <button type="button" class="cat-pill" data-category="프랑스식">🥐 프랑스식</button>
+                    <button type="button" class="cat-pill" data-category="카페">☕️ 카페/디저트</button>
+                    <button type="button" class="cat-pill custom-cat-btn" id="addCustomCatBtn">
+                      <i class="fa-solid fa-plus"></i> 직접입력
+                    </button>
+
+                    <!-- Inline Custom Category Input Box -->
+                    <div id="customCatInputWrap" class="custom-cat-input-wrap" style="display: none;">
+                      <input type="text" id="customCatInput" placeholder="요리 종류 (예: 분식, 치킨, 고기 등)" maxlength="15">
+                      <button type="button" id="confirmCustomCatBtn" class="cat-inline-action confirm" title="추가"><i class="fa-solid fa-check"></i></button>
+                      <button type="button" id="cancelCustomCatBtn" class="cat-inline-action cancel" title="취소"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                  </div>
+                  <input type="hidden" id="selectedCategory" value="한식">
+                </div>
+              </div>
+
+              <!-- Tags Field -->
+              <div class="org-row">
+                <div class="org-field">
+                  <label class="field-label"><i class="fa-solid fa-hashtag"></i> 태그 (쉼표 또는 엔터로 추가)</label>
+                  <div class="tag-input-container" id="tagContainer">
+                    <span class="tag-badge">추천 <i class="fa-solid fa-xmark remove-tag"></i></span>
+                    <input type="text" id="tagInput" placeholder="태그 입력 후 엔터...">
+                  </div>
+                </div>
+              </div>
+
+              <!-- User Memo Field -->
+              <div class="org-row">
+                <div class="org-field">
+                  <label class="field-label"><i class="fa-solid fa-pen-nib"></i> 내 메모 / 노션에 남길 코멘트</label>
+                  <textarea id="inputMemo" class="form-textarea" rows="2" placeholder="이 링크를 저장하는 이유, 핵심 인사이트, 할 일 메모..."></textarea>
+                </div>
+              </div>
+            </div>
+
+            <!-- Submit Button Area -->
+            <div class="submit-action-area">
+              <button type="button" id="resetBtn" class="btn btn-ghost">
+                <i class="fa-solid fa-rotate-left"></i> 초기화
+              </button>
+              
+              <button type="button" id="saveNotionBtn" class="btn btn-save-notion">
+                <span class="btn-text">
+                  <i class="fa-brands fa-neos"></i> 노션에 저장하기
+                </span>
+                <span class="btn-loader">
+                  <i class="fa-solid fa-circle-notch fa-spin"></i> 노션으로 전송 중...
+                </span>
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <!-- Right Column: Recent Archive & Stats -->
+      <section class="card archive-card">
+        <div class="card-header flex-between">
+          <div>
+            <span class="badge badge-subtle">Saved Feed</span>
+            <h2>최근 저장된 링크</h2>
+          </div>
+          <div class="archive-header-actions">
+            <span id="historyCountBadge" class="counter-badge">0개</span>
+            <button id="refreshHistoryBtn" class="icon-btn" title="새로고침">
+              <i class="fa-solid fa-arrows-rotate"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="archive-search-bar">
+          <div class="search-input-wrap">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="searchArchiveInput" placeholder="제목, 메모, 태그로 검색...">
+          </div>
+        </div>
+
+        <!-- History list container -->
+        <div id="historyList" class="history-list">
+          <!-- Dynamic Items inserted via JS -->
+          <div class="empty-state">
+            <div class="empty-icon">
+              <i class="fa-solid fa-inbox"></i>
+            </div>
+            <p class="empty-title">아직 저장된 링크가 없습니다</p>
+            <p class="empty-desc">웹 링크를 입력하고 노션에 저장해 보세요!</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Notion Web Collector &bull; Target ID: <code id="footerTargetId">166ad860bd648097afedff31acfa1fb5</code></p>
+      <div class="footer-links">
+        <a href="https://developers.notion.com/" target="_blank">Notion API Docs</a>
+        &bull;
+        <a href="https://www.notion.so/my-integrations" target="_blank">My Integrations</a>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-backdrop">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <i class="fa-solid fa-sliders modal-icon"></i>
+          <h3>노션 연동 설정 (Notion Settings)</h3>
+        </div>
+        <button id="closeSettingsBtn" class="modal-close-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="notice-box notice-info">
+          <i class="fa-solid fa-circle-info"></i>
+          <div>
+            <strong>노션 API 키 입력 안내</strong>
+            <p>노션과 실시간으로 연동하려면 Notion 개발자 포털에서 발급한 내부 통합 시크릿 키가 필요합니다. 아직 키가 없으시더라도 로컬 대시보드 저장 기능으로 바로 사용해 보실 수 있습니다.</p>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="notionApiKeyInput">Notion API Secret Key (내부 통합 토큰)</label>
+          <div class="password-input-wrap">
+            <input type="password" id="notionApiKeyInput" class="form-input" placeholder="ntn_... 또는 secret_...">
+            <button type="button" id="toggleKeyVisibility" class="toggle-visibility-btn">
+              <i class="fa-solid fa-eye"></i>
+            </button>
+          </div>
+          <small class="helper-text">
+            👉 <a href="https://www.notion.so/my-integrations" target="_blank">Notion Integrations 페이지</a>에서 생성할 수 있습니다.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label for="notionTargetIdInput">저장할 Notion 페이지 또는 데이터베이스 ID</label>
+          <input type="text" id="notionTargetIdInput" class="form-input" value="166ad860bd648097afedff31acfa1fb5">
+          <small class="helper-text">
+            노션 링크(https://app.notion.com/p/...)의 32자리 고유 번호입니다.
+          </small>
+        </div>
+
+        <div class="connection-test-result" id="connectionTestResult"></div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" id="testConnectionBtn" class="btn btn-secondary">
+          <i class="fa-solid fa-plug"></i> 연결 테스트
+        </button>
+        <button type="button" id="saveSettingsBtn" class="btn btn-accent">
+          <i class="fa-solid fa-check"></i> 설정 저장
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Guide Modal -->
+  <div id="guideModal" class="modal-backdrop">
+    <div class="modal-window modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <i class="fa-solid fa-book-open modal-icon"></i>
+          <h3>노션 연동 3단계 완벽 가이드</h3>
+        </div>
+        <button id="closeGuideBtn" class="modal-close-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="guide-steps">
+          
+          <div class="step-card">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <h4>Notion API 키 발급받기</h4>
+              <p>1. <a href="https://www.notion.so/my-integrations" target="_blank" class="text-link">Notion 개발자 포털 (내 통합) <i class="fa-solid fa-arrow-up-right-from-square"></i></a> 로 이동합니다.</p>
+              <p>2. <strong>[+ 새 통합 만들기]</strong> 버튼을 클릭합니다.</p>
+              <p>3. 이름(예: <code>웹 링크 수집기</code>)을 입력하고 워크스페이스를 선택한 후 저장합니다.</p>
+              <p>4. 생성된 <strong>'내부 통합 시크릿 (secret_... 또는 ntn_...)'</strong>을 복사합니다.</p>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <h4>내 노션 페이지에 통합 봇 추가하기 (중요 ⭐️)</h4>
+              <p>1. 연결할 노션 페이지(<code>166ad860bd648097afedff31acfa1fb5</code>)를 웹 브라우저나 노션 앱에서 엽니다.</p>
+              <p>2. 페이지 오른쪽 상단의 <strong>점 세 개 (···)</strong> 버튼을 클릭합니다.</p>
+              <p>3. 맨 아래 <strong>[연결(Connect)]</strong> 또는 <strong>[연결 추가]</strong>를 누릅니다.</p>
+              <p>4. 1단계에서 만든 <strong>'웹 링크 수집기'</strong>를 찾아 선택하고 확인을 누르면 권한 부여가 완료됩니다!</p>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <h4>웹앱 설정에 키 등록하고 저장 시작하기</h4>
+              <p>1. 이 웹앱 상단의 <strong>[⚙️ 설정]</strong> 버튼을 누릅니다.</p>
+              <p>2. 1단계에서 복사한 시크릿 키를 입력하고 <strong>[설정 저장]</strong>을 누릅니다.</p>
+              <p>3. 이제 웹 링크를 입력하고 <strong>[노션에 저장하기]</strong>를 누르면 끝!</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" id="confirmGuideBtn" class="btn btn-accent">이해했습니다! 시작하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Photo Selection / Change Modal -->
+  <div id="photoModal" class="modal-backdrop">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <i class="fa-solid fa-camera modal-icon"></i>
+          <h3>대표 음식 / 식당 사진 선택</h3>
+        </div>
+        <button id="closePhotoModalBtn" class="modal-close-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- 1. Extracted Candidate Photos Gallery -->
+        <div class="photo-section" id="candidatePhotosSection">
+          <label class="field-label"><i class="fa-solid fa-images"></i> 이 식당의 사진 목록 (클릭하여 선택)</label>
+          <div id="candidatePhotosGrid" class="candidate-photos-grid">
+            <!-- Candidate thumbnails will be rendered here -->
+          </div>
+        </div>
+
+        <!-- 2. Manual URL Input -->
+        <div class="photo-section" style="margin-top: 20px;">
+          <label class="field-label" for="manualPhotoUrlInput"><i class="fa-solid fa-link"></i> 이미지 주소(URL) 직접 입력</label>
+          <div class="input-with-btn">
+            <input type="url" id="manualPhotoUrlInput" class="form-input" placeholder="https://... 이미지 링크 붙여넣기">
+            <button type="button" id="applyManualPhotoBtn" class="btn btn-accent">적용</button>
+          </div>
+          <small class="helper-text">인터넷이나 블로그에서 음식 사진을 [우클릭 ➡️ 이미지 주소 복사]하여 붙여넣으실 수 있습니다.</small>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" id="cancelPhotoModalBtn" class="btn btn-secondary">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile Installation & QR Modal -->
+  <div id="mobileModal" class="modal-backdrop">
+    <div class="modal-window modal-mobile-app">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <i class="fa-solid fa-mobile-screen-button modal-icon"></i>
+          <h3>호야 맛집 스마트폰 앱 설치</h3>
+        </div>
+        <button id="closeMobileModalBtn" class="modal-close-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Cute Mascot Header Banner -->
+        <div class="mobile-app-banner">
+          <img src="/apple-touch-icon.png" alt="호야 맛집 아이콘" class="app-icon-preview">
+          <div class="app-meta">
+            <h4 class="app-name">호야 맛집 탐험!</h4>
+            <p class="app-sub">스마트폰 홈 화면에 귀여운 전용 앱으로 설치하기</p>
+            <span class="pwa-badge"><i class="fa-solid fa-bolt"></i> PWA 모바일 웹앱 지원</span>
+          </div>
+        </div>
+
+        <!-- QR Code Section -->
+        <div class="qr-code-section">
+          <div class="qr-box">
+            <img id="mobileQrCode" src="" alt="휴대폰 접속용 QR 코드" class="qr-img">
+            <p class="qr-tip"><i class="fa-solid fa-camera"></i> 스마트폰 카메라로 QR 코드를 비추면 즉시 열립니다</p>
+          </div>
+          <div class="direct-link-box">
+            <label class="field-label">휴대폰 브라우저 직접 접속 주소:</label>
+            <div class="input-with-btn">
+              <input type="text" id="mobileUrlDisplay" class="form-input" readonly value="http://118.35.21.39:3000">
+              <button type="button" id="copyMobileUrlBtn" class="btn btn-secondary"><i class="fa-regular fa-copy"></i> 복사</button>
+            </div>
+            <small class="helper-text">컴퓨터와 같은 와이파이(공유기)에 연결되어 있으면 바로 열립니다.</small>
+          </div>
+        </div>
+
+        <!-- Phone-specific Installation Steps -->
+        <div class="phone-install-guide">
+          <div class="phone-guide-col">
+            <div class="guide-platform-badge apple-badge">
+              <i class="fa-brands fa-apple"></i> 아이폰 (Safari)
+            </div>
+            <ol class="step-list">
+              <li>사파리로 위 주소 접속 후 하단 중앙 <strong>[공유 아이콘 ⎋]</strong> 터치</li>
+              <li>화면을 올려 <strong>[홈 화면에 추가]</strong> 터치</li>
+              <li>호야 캐릭터 아이콘 확인 후 <strong>[추가]</strong> 터치하면 바탕화면 설치 끝!</li>
+            </ol>
+          </div>
+
+          <div class="phone-guide-col">
+            <div class="guide-platform-badge android-badge">
+              <i class="fa-brands fa-android"></i> 갤럭시 / 안드로이드 (Chrome)
+            </div>
+            <ol class="step-list">
+              <li>크롬 브라우저로 접속 후 우측 상단 <strong>[점 세 개 (···)]</strong> 터치</li>
+              <li><strong>[홈 화면에 추가]</strong> 또는 <strong>[앱 설치]</strong> 터치</li>
+              <li>스마트폰 바탕화면에 귀여운 전용 앱 아이콘으로 자동 생성!</li>
+            </ol>
+          </div>
+        </div>
+
+        <!-- PWA In-browser Install Prompt Button (if triggered) -->
+        <div id="pwaInstallPromptBox" style="display: none; margin-top: 16px;">
+          <button type="button" id="triggerPwaInstallBtn" class="btn btn-accent btn-block" style="width: 100%; justify-content: center; padding: 12px; font-size: 15px;">
+            <i class="fa-solid fa-download"></i> 스마트폰에 즉시 앱 설치하기
+          </button>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" id="cancelMobileModalBtn" class="btn btn-secondary">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
